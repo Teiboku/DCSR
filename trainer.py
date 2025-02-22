@@ -14,10 +14,16 @@ class Trainer():
         self.args = args
         self.scale = args.scale
 
+        # Add DDP setup
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs!")
+            self.model = nn.DataParallel(my_model)
+        else:
+            self.model = my_model
+
         self.ckp = ckp
         self.loader_train = loader.loader_train
         self.loader_test = loader.loader_test
-        self.model = my_model
         self.loss = my_loss
         self.optimizer = utility.make_optimizer(args, self.model)
 
@@ -46,8 +52,12 @@ class Trainer():
             timer_model.tic()
 
             self.optimizer.zero_grad()
-            sr = self.model(lr, ref)
-            loss = self.loss(sr, hr,ref)
+            # Handle multi-GPU
+            if isinstance(self.model, nn.DataParallel):
+                sr = self.model.module(lr, ref)
+            else:
+                sr = self.model(lr, ref)
+            loss = self.loss(sr, hr, ref)
                        
             
             loss.backward()
@@ -92,7 +102,11 @@ class Trainer():
 
                 lr, hr, ref = self.prepare(lr, hr, ref)
 
-                sr = self.model(lr, ref) 
+                # Handle multi-GPU
+                if isinstance(self.model, nn.DataParallel):
+                    sr = self.model.module(lr, ref)
+                else:
+                    sr = self.model(lr, ref)
 
                 sr = utility.quantize(sr, self.args.rgb_range)
 
@@ -132,6 +146,7 @@ class Trainer():
 
     def prepare(self, *args):
         device = torch.device('cpu' if self.args.cpu else 'cuda')
+
         def _prepare(tensor):
             if self.args.precision == 'half': tensor = tensor.half()
             return tensor.to(device)
